@@ -5,7 +5,7 @@ from anthropic import AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageDeltaEvent,ThinkingDelta, TextDelta
 from anthropic.types.raw_message_delta_event import Delta
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 
 """
 claude-opus 开头的模型，会映射到 deepseek-v4-pro
@@ -33,11 +33,11 @@ class ClientConfig:
     timeout: float = 120.00
     stream: bool = True
     """anthropic: thinking={"type": "enabled", "budget_tokens": 10000},"""
-    thinking: dict = {"type": "adaptive"}
+    thinking: dict = field(default_factory=lambda: {"type": "adaptive"})
     # """openai: reasoning_effort="high",  extra_body={"thinking": {"type": "enabled"}}"""
     # extra_body: dict = {"thinking": {"type": "enabled"}}
     """{"type": "any"}	强制至少一个; {"type": "none"} 禁用工具;{"type": "tool", "name": "get_weather"} 强制指定工具"""
-    tool_choice:dict = {"type": "auto"}
+    tool_choice: dict = field(default_factory=lambda: {"type": "auto"})
     default_headers: dict = field(default_factory=dict)
     
     # """anthropic: Enable strict mode;limit:20;Optional parameters < 24"""
@@ -129,9 +129,9 @@ class ClientConfig:
     
     
     
-    citations: dict = {"enabled": True} 
+    citations: dict = field(default_factory=lambda: {"enabled": True})
     """ Cache the document content """
-    cache_control: dict = {"type": "ephemeral"}
+    cache_control: dict = field(default_factory=lambda: {"type": "ephemeral"})
     
     
     # def __post_init__(self):
@@ -183,6 +183,7 @@ class LLMClient:
         self.usage = Usage()
         kwargs: dict = {
             "api_key": config.api_key,
+            "base_url": config.base_url,
             "max_retries": config.max_retrise,
             "timeout": config.timeout,
             "default_headers": config.default_headers,
@@ -199,10 +200,26 @@ class LLMClient:
     async def _stream(
         self,
         kwargs,
+        on_text:Callable[[str], None] = lambda t: print(t, end=""),
+        on_thinking: Callable[[str], None] | None = lambda t: print(t, end=""),
     ):
         async with self._client.messages.stream(**kwargs) as stream:
             async for event in stream:
-                print(event)
+                etype = getattr(event, "type", None)
+                if etype == "content_block_start":
+                    current_block_type = event.content_block.type
+                    if current_block_type == "thinking" and on_thinking:
+                        on_thinking("<think>\n")
+                elif etype == "content_block_delta":
+                    delta = event.delta
+                    if isinstance(delta, TextDelta):
+                        on_text(delta.text)
+                    elif isinstance(delta, ThinkingDelta):
+                        on_thinking(delta.thinking)
+                elif etype == "content_block_stop":
+                    if current_block_type == "thinking" and on_thinking:
+                        on_thinking("</think>\n")
+                    current_block_type = None
                 
             msg = await stream.get_final_message()
         
@@ -237,60 +254,29 @@ class LLMClient:
 #         return f"{response.content[0].text}\n\n{note}"
 #     return response.content[0].text
 
-def test():
-    client = Anthropic(base_url="http://127.0.0.1:3000/anthropic", api_key="sgw_hpwo4w5f6fyxmj25u5kqxq8i")
-
-    while True:
-        response = client.messages.create(
-            model = "deepseek-v4-pro",
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant"
-                },
-                {
-                    "role": "user",
-                    "content": "Hi"
-                }
-            ],
-            max_tokens=512,
-            stream=True
-        )
-        
-        for iter in response:
-            # print(iter)
-            # breakpoint()
-            try:
-                if isinstance(iter, RawContentBlockDeltaEvent):
-                    if isinstance(iter.delta, ThinkingDelta):
-                        print(iter.delta.thinking, end="", flush=True)
-
-                    elif isinstance(iter.delta, TextDelta):
-                        print(iter.delta.text, end="", flush=True)
-                    
-                if isinstance(iter,RawMessageDeltaEvent):
-                    print("\n")
-                    print(iter.delta.stop_reason)
-                    # breakpoint() 
-                
-            except:
-                breakpoint()
-        # breakpoint()
-        break
-    
-    """"""
-    client = Anthropic()
-
-    with client.messages.stream(
-        model="claude-opus-4-8",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": "Hello!"}],
-    ) as stream:
-        for event in stream:
-            if event.type == "message_delta":
-                stop_reason = event.delta.stop_reason
-                if stop_reason:
-                    print(f"Stream ended with: {stop_reason}")
     
 if __name__ == "__main__":
-    test()
+    import argparse
+    import asyncio
+    parser = argparse.ArgumentParser()
+    
+    config = ClientConfig(
+        model="deepseek-v4-pro",
+        api_key="sgw_hpwo4w5f6fyxmj25u5kqxq8i",
+        base_url="http://127.0.0.1:3000/anthropic"
+    )
+    
+    client = LLMClient(config)
+    kwargs = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": config.system_prompt},
+            {"role": "user", "content": "hello"}
+        ],
+        "max_tokens": config.max_token,
+        **client._extra_params()
+    }
+    
+    response = asyncio.run(client._stream(kwargs))
+    breakpoint()
+    
