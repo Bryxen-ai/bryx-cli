@@ -200,9 +200,12 @@ class LLMClient:
     async def _stream(
         self,
         kwargs,
-        on_text:Callable[[str], None] = lambda t: print(t, end=""),
-        on_thinking: Callable[[str], None] | None = lambda t: print(t, end=""),
+        on_text:Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ):
+        on_text = on_text or (lambda t: print(t, end=""))
+        on_thinking = on_thinking or (lambda t: print(t, end=""))
+        breakpoint()
         async with self._client.messages.stream(**kwargs) as stream:
             async for event in stream:
                 etype = getattr(event, "type", None)
@@ -225,7 +228,39 @@ class LLMClient:
         
         self.usage.update(msg.usage)
         return msg
+    
+    def _build_tools_param(self, tools: list[dict]) -> list[dict] | None:
+        return tools if tools else None
 
+    async def create(
+        self, 
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        on_text: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None
+    ):
+        tools_param = self._build_tools_param(tools or [])
+        # extra = self._extra_params()
+        
+        kwargs = {
+            "model": self.cfg.model,
+            "messages": messages,
+            "max_tokens": self.cfg.max_token,
+            "system": self.cfg.system_prompt,
+            **self._extra_params()
+        }
+        if tools_param:
+            kwargs["tools"] = tools_param
+        
+        if self.cfg.stream:
+            return await self._stream(kwargs, on_text=on_text, on_thinking=on_thinking)
+        else:
+            async with self._client.messages.stream(**kwargs) as stream:
+                msg = await stream.get_final_message()
+            self.usage.update(msg.usage)
+            return msg
+        
+    
 
 
 # "养成在响应处理逻辑中检查 stop_reason 的习惯："
@@ -277,6 +312,7 @@ if __name__ == "__main__":
         **client._extra_params()
     }
     
-    response = asyncio.run(client._stream(kwargs))
+    # response = asyncio.run(client._stream(kwargs))
+    response = asyncio.run(client.create(messages=kwargs["messages"]))
     breakpoint()
     
