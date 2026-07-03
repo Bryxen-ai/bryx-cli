@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable, Any
@@ -31,6 +32,7 @@ class Agent:
         skills_dir: str = "skills",
         on_text: Callable[[str], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
+        on_tool_call: Callable[[str, dict], None] | None = None,
         ):
         self.skills_dir = skills_dir
         self.llm = LLMClient(config=config)
@@ -39,6 +41,7 @@ class Agent:
         self.skill_loader = SkillLoader(skills_dir)
         self.on_text = on_text or (lambda t: print(t, end="", flush=True))
         self.on_thinking = on_thinking or self._default_on_thinking
+        self.on_tool_call = on_tool_call or (lambda name, inp: print(f"\n[tool: {name}] ", end="", flush=True))
         
         self.llm.cfg.system_prompt = _build_system_prompt(skill_loader=self.skill_loader)
     
@@ -93,6 +96,9 @@ class Agent:
                 name = tu["name"]
                 inp = tu["input"]
                 tid = tu["id"]
+                
+                if self.on_tool_call:
+                    self.on_tool_call(name, inp)
             
                 result = await self.registry.dispatch(name, inp)
                 content_str = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
@@ -104,7 +110,25 @@ class Agent:
             
             self.context.add_tool_results(tool_results)
             
-            breakpoint()
+    async def run_repl(self):
+        # print(f"\033[36m session {self._session_id}\033[0m")
+        print("输入消息 (Ctrl+D to exit)\n")
+        
+        while True:
+            try:
+                user_input = await asyncio.to_thread(input, "\033[1m> \033[0m")
+            except (EOFError, KeyboardInterrupt):
+                print("\nBye!")
+                break
+            
+            if not user_input.strip():
+                continue
+
+            print()
+            await self.run(user_input.strip())
+            print()
+            
+
         
                 
                 

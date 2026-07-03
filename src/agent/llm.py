@@ -205,7 +205,6 @@ class LLMClient:
     ):
         on_text = on_text or (lambda t: print(t, end=""))
         on_thinking = on_thinking or (lambda t: print(t, end=""))
-        breakpoint()
         async with self._client.messages.stream(**kwargs) as stream:
             async for event in stream:
                 etype = getattr(event, "type", None)
