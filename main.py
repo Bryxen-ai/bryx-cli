@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from src.agent.core import Agent
 from src.agent.llm import ClientConfig
 from src.agent.prompts import SYSTEM_PROMPT
+from src.utils.repl import run_repl
 
 
 def main() -> None:
@@ -27,7 +28,7 @@ def main() -> None:
         on_thinking=lambda t: print(f"\033[2m{t}\033[0m", end="", flush=True),
     )
 
-    asyncio.run(agent.run_repl())
+    asyncio.run(run_repl(agent))
 
 
 if __name__ == "__main__":
